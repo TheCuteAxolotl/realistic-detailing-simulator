@@ -6,7 +6,8 @@ local Config = require(ReplicatedStorage.Shared.Config)
 
 local PlayerDataService = {}
 
-local store = DataStoreService:GetDataStore("RealisticDetailingSimulator_Player_v1")
+local store = nil
+local dataStoreEnabled = false
 local profiles = {}
 
 local function defaultProfile()
@@ -15,6 +16,26 @@ local function defaultProfile()
 		Jobs = 0,
 		Reputation = 0,
 	}
+end
+
+local function initializeDataStore()
+	-- Unpublished Studio places cannot access DataStoreService. In that case,
+	-- keep using temporary in-memory profiles so the gameplay prototype still runs.
+	if game.GameId == 0 then
+		warn("[PlayerDataService] Unpublished Studio place detected. Using temporary session data; progress will not save.")
+		return
+	end
+
+	local success, result = pcall(function()
+		return DataStoreService:GetDataStore("RealisticDetailingSimulator_Player_v1")
+	end)
+
+	if success then
+		store = result
+		dataStoreEnabled = true
+	else
+		warn(`[PlayerDataService] DataStore unavailable. Using temporary session data: {result}`)
+	end
 end
 
 local function sanitizeProfile(raw)
@@ -88,14 +109,17 @@ end
 
 function PlayerDataService.LoadPlayer(player)
 	local profile = defaultProfile()
-	local success, result = pcall(function()
-		return store:GetAsync(`player_{player.UserId}`)
-	end)
 
-	if success then
-		profile = sanitizeProfile(result)
-	else
-		warn(`[PlayerDataService] DataStore load unavailable for {player.Name}: {result}`)
+	if dataStoreEnabled and store then
+		local success, result = pcall(function()
+			return store:GetAsync(`player_{player.UserId}`)
+		end)
+
+		if success then
+			profile = sanitizeProfile(result)
+		else
+			warn(`[PlayerDataService] DataStore load unavailable for {player.Name}: {result}`)
+		end
 	end
 
 	profiles[player] = profile
@@ -104,7 +128,7 @@ end
 
 function PlayerDataService.SavePlayer(player)
 	local profile = profiles[player]
-	if not profile then
+	if not profile or not dataStoreEnabled or not store then
 		return
 	end
 
@@ -149,6 +173,8 @@ function PlayerDataService.GetPublicProfile(player)
 end
 
 function PlayerDataService.Init()
+	initializeDataStore()
+
 	Players.PlayerAdded:Connect(PlayerDataService.LoadPlayer)
 	Players.PlayerRemoving:Connect(function(player)
 		PlayerDataService.SavePlayer(player)
